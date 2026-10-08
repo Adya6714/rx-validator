@@ -70,3 +70,25 @@ def test_post_empty_object_missing_eye():
     body = r.json()
     assert body["valid"] is False
     assert any(e.get("code") == "MISSING_EYE" for e in body["errors"])
+
+
+# --- v2: response shape --------------------------------------------------------
+
+def test_post_validate_v2_shape_has_new_keys():
+    r = client.post("/validate", json=VALID_BODY)
+    body = r.json()
+    assert "warnings" in body
+    assert "summary" in body
+    assert "plausibility" in body
+
+
+def test_post_raw_not_json_has_no_v2_keys():
+    r = client.post(
+        "/validate",
+        content=b"not json",
+        headers={"content-type": "application/json"},
+    )
+    body = r.json()
+    assert "warnings" not in body
+    assert "summary" not in body
+    assert "plausibility" not in body
