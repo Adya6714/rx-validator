@@ -1,0 +1,6 @@
+- [Setup] Scaffolded `rx-validator/` with venv, FastAPI/uvicorn/pytest/httpx, and contract docs; left app/static/tests empty for Tab A/B/C ownership.
+- [Setup] HLD is: browser `static/index.html` (text inputs, fetch POST /validate) → FastAPI `app/main.py` → pure `app/validator.py`; inputs are type=text so "abc" reaches the backend.
+- [Agent C] POST [] expects HTTP 400 BAD_REQUEST while POST {} expects 200 MISSING_EYE because contract treats non-object bodies as 400 and missing eyes as validation errors.
+- [Agent C] validate_prescription(None/[]/{}/{"right":"x"}) asserts no raise + MISSING_EYE only, not specific message text, because contract guarantees never-raise + missing-eye errors without fixing exact wording.
+- [Agent C] Axis 0 asserted as OUT_OF_RANGE (not a separate code) because A4 says 0 is invalid and 180 is used instead; axis with CYL 0 uses AXIS_WITHOUT_CYL per A6.
+- [Agent C] Raw non-JSON POST uses content=b"not json" with application/json so TestClient hits the parse-failure path rather than form encoding.

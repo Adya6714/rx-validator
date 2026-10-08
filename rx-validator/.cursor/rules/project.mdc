@@ -1,0 +1,26 @@
+---
+description: Rx validator project rules
+alwaysApply: true
+---
+# Project: Prescription (Rx) validator
+Stack: Python 3, FastAPI, uvicorn, plain HTML + vanilla JS. pytest + httpx for tests.
+No other dependencies. No frameworks on the frontend. No database.
+
+## Source of truth
+- docs/contract.md defines function signatures, request/response shapes, error codes. Follow it exactly.
+- docs/assumptions.md defines domain rules. Do not invent new rules.
+
+## File ownership (STRICT)
+- Only create or edit the files your prompt assigns to you.
+- If you need a change in another file, write it in docs/todo.md instead of editing.
+
+## Code rules
+- Never let an exception escape to the user. Bad input must become an error object.
+- Error messages must name the eye, the field, the allowed range, and the received value.
+- Collect all errors, do not stop at the first one.
+- Keep it simple and readable. No clever abstractions.
+- Float step checks must not use modulo; use round(v*4) comparison.
+
+## Logging
+- Append every non-obvious choice to docs/decisions.md as:
+  "- [Agent X] <decision> because <reason>"
