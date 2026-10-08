@@ -10,16 +10,15 @@ Build a working service or app that validates prescription inputs (left and righ
 
 ## 2. What was built (beyond the statement)
 
-| Asked for                    | Built                                                                                            |
-| ---------------------------- | ------------------------------------------------------------------------------------------------ |
-| Validate SPH/CYL/Axis ranges | Ranges, 0.25 D steps, whole-number Axis 1 to 180, Axis/CYL dependency rules                      |
-| Clear, specific errors       | Every error names eye, field, allowed range and the value received, with a machine-readable code |
-| Survive bad/empty input      | Strict parser, length caps, body size cap, never an unhandled 500 (95 tests)                     |
-| Working URL                  | FastAPI on localhost:8000, web form + JSON API + Swagger at /docs                                |
-| One manual change            | Unicode minus support, done by hand with its own test                                            |
+| Asked for | Built |
+|---|---|
+| Validate SPH/CYL/Axis ranges | Ranges, 0.25 D steps, whole-number Axis 1 to 180, Axis/CYL dependency rules |
+| Clear, specific errors | Every error names eye, field, allowed range and the value received, with a machine-readable code |
+| Survive bad/empty input | Strict parser, length caps, body size cap, never an unhandled 500 (95 tests) |
+| Working URL | FastAPI on localhost:8000, web form + JSON API + Swagger at /docs |
+| One manual change | Unicode minus support, done by hand with its own test |
 
 **Innovations (not in the statement):**
-
 1. **"Did you mean" fixes with one click:** 1.30 -> +1.25, 125 -> +1.25 (missing decimal), axis 0 -> 180, axis 270 -> 90, an axis typed into CYL (CYL 90) -> moved to Axis.
 2. **Errors vs warnings:** impossible values block; clinically unusual but possible values (anisometropia, antimetropia, high power, plus-cyl, mixed notation) warn without blocking.
 3. **Clinical summary:** spherical equivalent and plus/minus cylinder transposition per eye.
@@ -41,14 +40,14 @@ Build a working service or app that validates prescription inputs (left and righ
 
 See `docs/assumptions.md` (A1 to A18). Key ones:
 
-| #        | Assumption                                                                               |
-| -------- | ---------------------------------------------------------------------------------------- |
-| A1 to A3 | SPH -20 to +20 required, CYL -6 to +6 optional, both in 0.25 steps                       |
-| A4 to A6 | Axis whole 1 to 180, required with CYL, error if given without CYL                       |
-| A9       | Invalid Rx = HTTP 200 with valid:false. Broken request = 400/413. Never an unhandled 500 |
-| A11      | Generic lab ranges, not Lenskart-specific; all are constants                             |
-| A15      | ML model ships with illustrative priors; must be re-fitted on real data                  |
-| A16      | Clinical flags never block                                                               |
+| # | Assumption |
+|---|---|
+| A1 to A3 | SPH -20 to +20 required, CYL -6 to +6 optional, both in 0.25 steps |
+| A4 to A6 | Axis whole 1 to 180, required with CYL, error if given without CYL |
+| A9 | Invalid Rx = HTTP 200 with valid:false. Broken request = 400/413. Never an unhandled 500 |
+| A11 | Generic lab ranges, not Lenskart-specific; all are constants |
+| A15 | ML model ships with illustrative priors; must be re-fitted on real data |
+| A16 | Clinical flags never block |
 
 ## 5. Architecture
 
@@ -136,14 +135,14 @@ CLAUDE.md, rules/    context and rules for the AI agents
 
 **Features (per two-eye Rx):**
 
-| Feature   | Meaning                          | Unusual when                                 |
-| --------- | -------------------------------- | -------------------------------------------- |
-| se_mean   | average SE                       | far from population median (both directions) |
-| se_diff   | SE difference between eyes       | higher                                       |
-| cyl_max   | strongest cylinder               | higher                                       |
-| cyl_diff  | cylinder difference between eyes | higher                                       |
-| obliquity | axis distance from 90/180        | higher                                       |
-| axis_asym | break from mirror symmetry       | higher                                       |
+| Feature | Meaning | Unusual when |
+|---|---|---|
+| se_mean | average SE | far from population median (both directions) |
+| se_diff | SE difference between eyes | higher |
+| cyl_max | strongest cylinder | higher |
+| cyl_diff | cylinder difference between eyes | higher |
+| obliquity | axis distance from 90/180 | higher |
+| axis_asym | break from mirror symmetry | higher |
 
 **Model:** each feature becomes a robust z-score using median and MAD (resistant to outliers in training data). Distance d2 = sum of z squared. Typicality = P(chi-square with 6 dof >= d2) x 100. Bands: >= 30 typical, 5 to 29 uncommon, < 5 rare. The top contributing features are returned as the explanation.
 
@@ -159,24 +158,24 @@ flowchart LR
 
 ## 8. Edge cases covered
 
-| Input                                        | Result                                      |
-| -------------------------------------------- | ------------------------------------------- |
-| empty form                                   | REQUIRED for both SPH, no crash             |
-| "abc", "1e1", "nan", "inf", "--1"            | NOT_A_NUMBER                                |
-| 50-character string                          | TOO_LONG                                    |
-| 20 KB body                                   | 413 PAYLOAD_TOO_LARGE                       |
-| "not json", `[]`                             | 400 BAD_REQUEST                             |
-| `{}` or missing eye                          | MISSING_EYE per eye                         |
-| "-1,25", "-1.25 DS", ".75", "Plano", "piano" | accepted                                    |
-| "-0.00"                                      | normalized to +0.00                         |
-| "x90", "90°", "090"                          | Axis 90                                     |
-| Axis 0 / 270 / 90.4                          | error + fix 180 / 90 / 90                   |
-| CYL 90, Axis blank                           | error + "move 90 to Axis"                   |
-| CYL -7 and Axis 200                          | both errors shown                           |
-| R -1.00, L -4.00                             | valid + ANISOMETROPIA warning               |
-| both eyes -1.50 x 45                         | valid, rules 100, ML rare (mirror symmetry) |
-| OD/OS keys, SPH/CYL uppercase                | accepted                                    |
-| "−1.25" (Unicode minus)                      | accepted after the manual change            |
+| Input | Result |
+|---|---|
+| empty form | REQUIRED for both SPH, no crash |
+| "abc", "1e1", "nan", "inf", "--1" | NOT_A_NUMBER |
+| 50-character string | TOO_LONG |
+| 20 KB body | 413 PAYLOAD_TOO_LARGE |
+| "not json", `[]` | 400 BAD_REQUEST |
+| `{}` or missing eye | MISSING_EYE per eye |
+| "-1,25", "-1.25 DS", ".75", "Plano", "piano" | accepted |
+| "-0.00" | normalized to +0.00 |
+| "x90", "90°", "090" | Axis 90 |
+| Axis 0 / 270 / 90.4 | error + fix 180 / 90 / 90 |
+| CYL 90, Axis blank | error + "move 90 to Axis" |
+| CYL -7 and Axis 200 | both errors shown |
+| R -1.00, L -4.00 | valid + ANISOMETROPIA warning |
+| both eyes -1.50 x 45 | valid, rules 100, ML rare (mirror symmetry) |
+| OD/OS keys, SPH/CYL uppercase | accepted |
+| "−1.25" (Unicode minus) | accepted after the manual change |
 
 ## 9. Design decisions (summary, full log in decisions.md)
 

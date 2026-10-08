@@ -1,67 +1,111 @@
 """Pure validation logic for eyeglass prescriptions (SPH, CYL, Axis).
 
 No web framework code here. Every bad input becomes an error dict; nothing raises.
+
+Pipeline per request:
+  1. normalise payload keys (right/left, OD/OS aliases, case-insensitive fields)
+  2. per-field parsing and checks (errors, each with an optional "did you mean" suggestion)
+  3. per-eye cross-field checks (Axis vs CYL)
+  4. cross-eye clinical checks (warnings, never block)
+  5. summary (spherical equivalent, transposed form)
+  6. scoring: rule-based plausibility + statistical anomaly model (app/anomaly.py)
 """
 
-import math
+import re
 
+from app import anomaly
+
+# ---- Domain constants (docs/assumptions.md) --------------------------------
 SPH_MIN, SPH_MAX = -20.0, 20.0
 CYL_MIN, CYL_MAX = -6.0, 6.0
 STEP = 0.25
 AXIS_MIN, AXIS_MAX = 1, 180
+MAX_INPUT_LEN = 20
 
-PLANO_WORDS = {"plano", "pl"}
-EYES = ("right", "left")
-
-# v2: clinical plausibility thresholds and scoring (docs/contract.md)
+# ---- Clinical warning thresholds --------------------------------------------
 HIGH_POWER_SPH = 10.0
 HIGH_POWER_CYL = 4.0
 ANISOMETROPIA_SE_DELTA = 2.00
 ANTIMETROPIA_SE = 1.00
+
+# ---- Rule-based plausibility score ------------------------------------------
 SCORE_START = 100
-SCORE_PENALTY = {"HIGH_POWER": 15, "ANISOMETROPIA": 20, "ANTIMETROPIA": 15}
-BAND_TYPICAL_MIN = 80
-BAND_DOUBLE_CHECK_MIN = 50
+SCORE_PENALTY = {"HIGH_POWER": 15, "ANISOMETROPIA": 25, "ANTIMETROPIA": 15, "MIXED_CYL_NOTATION": 10}
+BAND_TYPICAL, BAND_DOUBLE_CHECK = 80, 50
 
-MAX_INPUT_LEN = 20  # Phase 4.1: reject pathologically long raw input before parsing it
+PLANO_WORDS = {"plano", "pl", "piano"}          # "piano" is a common OCR/autocorrect typo of plano
+EYES = ("right", "left")
+EYE_ALIASES = {"right": "right", "od": "right", "re": "right", "r": "right",
+               "left": "left", "os": "left", "le": "left", "l": "left"}
+FIELDS = ("sph", "cyl", "axis")
+FIELD_ALIASES = {"sph": "sph", "sphere": "sph", "cyl": "cyl", "cylinder": "cyl", "axis": "axis", "ax": "axis"}
+
+# Strict number format: optional sign, digits, optional decimals. Rejects "1e3", "nan", "inf", "--1".
+NUMBER_RE = re.compile(r"^[+-]?(\d+(\.\d*)?|\.\d+)$")
+POWER_SUFFIX_RE = re.compile(r"\s*(ds|dc|d)$", re.IGNORECASE)   # "-1.25 DS", "-0.50D"
+AXIS_CLEAN_RE = re.compile(r"^\s*[x×*@]\s*|\s*(°|deg|degrees)\s*$", re.IGNORECASE)  # "x90", "90°"
 
 
+# ---- Small helpers ----------------------------------------------------------
 def _is_blank(raw):
     return raw is None or (isinstance(raw, str) and raw.strip() == "")
 
 
 def _show(raw):
-    """How the received value appears inside an error message."""
     if _is_blank(raw):
         return "empty"
+    if isinstance(raw, str) and len(raw) > MAX_INPUT_LEN:
+        return f"{len(raw)} characters"
     return f'"{raw}"' if isinstance(raw, str) else str(raw)
 
 
-def _error(eye, field, code, message):
+def _fmt(v):
+    """Rx-style signed 2-decimal format. Avoids '-0.00'."""
+    return None if v is None else f"{v + 0.0:+.2f}"
+
+
+def _error(eye, field, code, message, suggestion=None):
+    err = {"eye": eye, "field": field, "code": code, "message": message}
+    if suggestion:
+        err["suggestion"] = suggestion
+    return err
+
+
+def _warning(eye, field, code, message):
     return {"eye": eye, "field": field, "code": code, "message": message}
 
 
+def _nearest_step(v):
+    return round(v / STEP) * STEP
+
+
+# ---- Parsing ----------------------------------------------------------------
 def parse_power(raw):
-    """Turn raw input into a float. Returns (value, error_code)."""
+    """Turn raw input into a float. Returns (value, error_code).
+
+    Accepts: numbers, "+1.25", "-0.50", ".75", "plano"/"pl", "-1,25" (comma decimal),
+    "-1.25 DS" / "-0.50D" (dioptre suffix). Rejects scientific notation, nan, inf.
+    """
     if _is_blank(raw):
         return None, None
-    if isinstance(raw, bool):  # True/False are ints in Python; reject them
+    if isinstance(raw, bool):
         return None, "NOT_A_NUMBER"
     if isinstance(raw, (int, float)):
         value = float(raw)
-    elif isinstance(raw, str):
-        text = raw.strip()
-        if text.lower() in PLANO_WORDS:
-            return 0.0, None
-        try:
-            value = float(text)
-        except ValueError:
+        if value != value or value in (float("inf"), float("-inf")):
             return None, "NOT_A_NUMBER"
-    else:
+        return value, None
+    if not isinstance(raw, str):
         return None, "NOT_A_NUMBER"
-    if math.isnan(value) or math.isinf(value):  # float("nan") and float("inf") parse fine
+    if len(raw) > MAX_INPUT_LEN:
+        return None, "TOO_LONG"
+    text = raw.strip()
+    if text.lower() in PLANO_WORDS:
+        return 0.0, None
+    text = POWER_SUFFIX_RE.sub("", text).replace(" ", "").replace(",", ".")
+    if not NUMBER_RE.match(text):
         return None, "NOT_A_NUMBER"
-    return value, None
+    return float(text), None
 
 
 def is_quarter_step(v):
@@ -69,263 +113,282 @@ def is_quarter_step(v):
     return abs(v * 4 - round(v * 4)) < 1e-9
 
 
-def _suggest_out_of_range(field, raw, value, lo, hi, axis_raw):
-    """Did-you-mean suggestion for an out-of-range SPH/CYL value (2.3).
-    Checked in a fixed order; returns the first match, or None."""
-    candidate = value / 100.0
-    if lo <= candidate <= hi and is_quarter_step(candidate):
-        return {"field": field, "value": f"{candidate:+.2f}",
-                "reason": f"Looks like a missing decimal point, got {_show(raw)}."}
-    if field == "cyl" and value == int(value):
-        whole = int(value)
-        if AXIS_MIN <= whole <= AXIS_MAX and _is_blank(axis_raw):
-            return {"field": "axis", "value": whole,
-                    "reason": f"This looks like an Axis value typed into CYL, got {_show(raw)}."}
-    return None
-
-
-def _check_power(eye, field, label, raw, lo, hi, required, errors, axis_raw=None):
+# ---- Field checks -----------------------------------------------------------
+def _check_power(eye, field, label, raw, lo, hi, required, errors, axis_blank=False):
     """Validate SPH or CYL. Returns the parsed value (or None)."""
     Eye = eye.capitalize()
-    if isinstance(raw, str) and len(raw) > MAX_INPUT_LEN:
-        errors.append(_error(eye, field, "TOO_LONG",
-            f"{Eye} eye {label} must be at most {MAX_INPUT_LEN} characters, "
-            f"got a {len(raw)}-character value."))
-        return None
+    rng = f"{lo:+.2f} to {hi:+.2f}"
     value, code = parse_power(raw)
+    if code == "TOO_LONG":
+        errors.append(_error(eye, field, code,
+            f"{Eye} eye {label} input is too long (max {MAX_INPUT_LEN} characters, allowed {rng}), got {_show(raw)}."))
+        return None
     if code:
         errors.append(_error(eye, field, code,
-            f"{Eye} eye {label} must be a number like -1.25 or +0.50, got {_show(raw)}."))
+            f"{Eye} eye {label} must be a number from {rng} like -1.25 or +0.50, got {_show(raw)}."))
         return None
     if value is None:
         if required:
             errors.append(_error(eye, field, "REQUIRED",
-                f"{Eye} eye {label} is required (must be between {lo:+.2f} and {hi:+.2f}), got empty."))
+                f"{Eye} eye {label} is required (allowed {rng}, use 0 or plano for no power), got empty."))
         return None
     if not (lo <= value <= hi):
-        err = _error(eye, field, "OUT_OF_RANGE",
-            f"{Eye} eye {label} must be between {lo:+.2f} and {hi:+.2f}, got {_show(raw)}.")
-        suggestion = _suggest_out_of_range(field, raw, value, lo, hi, axis_raw)
-        if suggestion:
-            err["suggestion"] = suggestion
-        errors.append(err)
+        errors.append(_error(eye, field, "OUT_OF_RANGE",
+            f"{Eye} eye {label} must be between {lo:+.2f} and {hi:+.2f}, got {_show(raw)}.",
+            _range_suggestion(field, value, lo, hi, axis_blank)))
         return None
     if not is_quarter_step(value):
-        nearest = round(value * 4) / 4
-        err = _error(eye, field, "BAD_STEP",
-            f"{Eye} eye {label} must be in 0.25 steps (e.g. -1.25, -1.50), got {_show(raw)}.")
-        err["suggestion"] = {"field": field, "value": f"{nearest:+.2f}",
-            "reason": f"Nearest valid 0.25 D step to {_show(raw)}."}
-        errors.append(err)
+        snap = _nearest_step(value)
+        errors.append(_error(eye, field, "BAD_STEP",
+            f"{Eye} eye {label} must be in 0.25 steps (allowed {rng}), got {_show(raw)}.",
+            {"field": field, "value": _fmt(snap), "reason": f"Nearest 0.25 step is {_fmt(snap)}."}))
         return None
     return value
 
 
-def _check_axis(eye, raw, cyl, errors):
-    """Validate Axis using the already-parsed CYL value. Returns int or None."""
-    Eye = eye.capitalize()
-    cyl_is_zero = cyl is None or cyl == 0
+def _range_suggestion(field, value, lo, hi, axis_blank):
+    """'Did you mean' for out-of-range powers. First match wins."""
+    guess = value / 100
+    if lo <= guess <= hi and is_quarter_step(guess) and guess != 0:
+        return {"field": field, "value": _fmt(guess),
+                "reason": f"Looks like a missing decimal point: {_fmt(guess)}."}
+    if field == "cyl" and axis_blank and value == int(value) and AXIS_MIN <= abs(value) <= AXIS_MAX:
+        return {"field": "axis", "value": int(abs(value)),
+                "reason": f"{int(abs(value))} looks like an Axis value typed into CYL."}
+    return None
 
-    if isinstance(raw, str) and len(raw) > MAX_INPUT_LEN:
-        errors.append(_error(eye, "axis", "TOO_LONG",
-            f"{Eye} eye Axis must be at most {MAX_INPUT_LEN} characters, "
-            f"got a {len(raw)}-character value."))
-        return None
 
-    if _is_blank(raw):
-        if not cyl_is_zero:
-            errors.append(_error(eye, "axis", "AXIS_REQUIRED",
-                f"{Eye} eye Axis is required (must be a whole number from {AXIS_MIN} to {AXIS_MAX}) "
-                f"when CYL is {cyl:+.2f}, got empty."))
-        return None
-
+def _parse_axis(raw):
+    """Returns (int_or_None, error_code, parsed_float)."""
+    if isinstance(raw, str):
+        if len(raw) > MAX_INPUT_LEN:
+            return None, "TOO_LONG", None
+        cleaned = AXIS_CLEAN_RE.sub("", raw).strip()
+        if cleaned.lower() in PLANO_WORDS:
+            return None, "NOT_A_NUMBER", None
+        raw = cleaned
     value, code = parse_power(raw)
-    if code or (isinstance(raw, str) and raw.strip().lower() in PLANO_WORDS):
-        errors.append(_error(eye, "axis", "NOT_A_NUMBER",
-            f"{Eye} eye Axis must be a whole number from {AXIS_MIN} to {AXIS_MAX}, got {_show(raw)}."))
-        return None
+    if code:
+        return None, code, None
     if value != int(value):
-        errors.append(_error(eye, "axis", "AXIS_NOT_INTEGER",
-            f"{Eye} eye Axis must be a whole number from {AXIS_MIN} to {AXIS_MAX} (no decimals), "
-            f"got {_show(raw)}."))
-        return None
+        return None, "AXIS_NOT_INTEGER", value
     axis = int(value)
     if not (AXIS_MIN <= axis <= AXIS_MAX):
-        err = _error(eye, "axis", "OUT_OF_RANGE",
-            f"{Eye} eye Axis must be a whole number from {AXIS_MIN} to {AXIS_MAX}, got {_show(raw)}.")
-        if axis == 0:
-            err["suggestion"] = {"field": "axis", "value": AXIS_MAX,
-                "reason": "Axis 0 is invalid; 180 means the same orientation."}
-        errors.append(err)
+        return None, "OUT_OF_RANGE", value
+    return axis, None, value
+
+
+def _check_axis(eye, raw, cyl, cyl_ok, errors):
+    """Validate Axis. Format/range always checked; CYL-dependent rules only when CYL parsed."""
+    Eye = eye.capitalize()
+    rng = f"{AXIS_MIN} to {AXIS_MAX}"
+    cyl_is_zero = cyl is None or cyl == 0
+
+    if _is_blank(raw):
+        if cyl_ok and not cyl_is_zero:
+            errors.append(_error(eye, "axis", "AXIS_REQUIRED",
+                f"{Eye} eye Axis is required (whole number {rng}) when CYL is {_fmt(cyl)}, got empty."))
         return None
-    if cyl_is_zero:
+
+    axis, code, value = _parse_axis(raw)
+    if code == "TOO_LONG":
+        errors.append(_error(eye, "axis", code,
+            f"{Eye} eye Axis input is too long (max {MAX_INPUT_LEN} characters, allowed {rng}), got {_show(raw)}."))
+        return None
+    if code == "NOT_A_NUMBER":
+        errors.append(_error(eye, "axis", code,
+            f"{Eye} eye Axis must be a whole number from {rng}, got {_show(raw)}."))
+        return None
+    if code == "AXIS_NOT_INTEGER":
+        snap = int(round(value))
+        sug = None
+        if AXIS_MIN <= snap <= AXIS_MAX:
+            sug = {"field": "axis", "value": snap, "reason": f"Axis is written in whole degrees: {snap}."}
+        errors.append(_error(eye, "axis", code,
+            f"{Eye} eye Axis must be a whole number from {rng} (no decimals), got {_show(raw)}.", sug))
+        return None
+    if code == "OUT_OF_RANGE":
+        sug = None
+        if value == 0:
+            sug = {"field": "axis", "value": 180, "reason": "0 and 180 are the same orientation; Rx convention writes 180."}
+        elif AXIS_MAX < value <= 360:
+            v = int(value) - 180
+            sug = {"field": "axis", "value": v if v else 180,
+                   "reason": f"Axis repeats every 180 degrees, so {int(value)} is the same as {v if v else 180}."}
+        errors.append(_error(eye, "axis", code,
+            f"{Eye} eye Axis must be a whole number from {rng}, got {_show(raw)}.", sug))
+        return None
+    if cyl_ok and cyl_is_zero:
         errors.append(_error(eye, "axis", "AXIS_WITHOUT_CYL",
-            f"{Eye} eye Axis should be empty when CYL is 0 or blank, got {_show(raw)}."))
+            f"{Eye} eye Axis should be empty when CYL is 0 or blank (Axis {rng} only applies with CYL), got {_show(raw)}.",
+            {"field": "axis", "value": "", "reason": "No cylinder means no axis. Clear it, or add the CYL value."}))
         return None
     return axis
 
 
-def validate_eye(eye, data):
-    """Validate one eye. Returns (errors, normalized)."""
+# ---- Eye level --------------------------------------------------------------
+def _normalise_eye_dict(data):
+    out = {}
+    for k, v in data.items():
+        key = FIELD_ALIASES.get(str(k).strip().lower())
+        if key and key not in out:
+            out[key] = v
+    return out
+
+
+def _validate_eye_full(eye, data):
+    """Returns (errors, normalized, parsed) where parsed holds floats for summary/scoring."""
     errors = []
+    empty = {"sph": None, "cyl": None, "axis": None}
     if not isinstance(data, dict):
         errors.append(_error(eye, "eye", "MISSING_EYE",
-            f"{eye.capitalize()} eye data is missing or not an object, got {_show(data)}."))
-        return errors, {"sph": None, "cyl": None, "axis": None}
+            f"{eye.capitalize()} eye data is missing or not an object, got {_show(data) if not isinstance(data, (dict, list)) else type(data).__name__}."))
+        return errors, dict(empty), {**empty, "ok": False}
 
+    data = _normalise_eye_dict(data)
+    axis_blank = _is_blank(data.get("axis"))
     sph = _check_power(eye, "sph", "SPH", data.get("sph"), SPH_MIN, SPH_MAX, True, errors)
+    n_before = len(errors)
     cyl_raw = data.get("cyl")
-    cyl = _check_power(eye, "cyl", "CYL", cyl_raw, CYL_MIN, CYL_MAX, False, errors,
-                        axis_raw=data.get("axis"))
-    if cyl is None and _is_blank(cyl_raw):
-        cyl = 0.0  # A2: blank CYL means 0.00
-    # If CYL itself was invalid, skip axis rules that depend on it (avoid noisy double errors)
-    cyl_invalid = any(e["field"] == "cyl" for e in errors)
-    axis = None
-    if not cyl_invalid:
-        axis = _check_axis(eye, data.get("axis"), cyl, errors)
+    cyl = _check_power(eye, "cyl", "CYL", cyl_raw, CYL_MIN, CYL_MAX, False, errors, axis_blank=axis_blank)
+    cyl_ok = len(errors) == n_before
+    if cyl is None and cyl_ok:
+        cyl = 0.0                       # A2: blank CYL means 0.00
+    axis = _check_axis(eye, data.get("axis"), cyl, cyl_ok, errors)
 
-    normalized = {
-        "sph": None if sph is None else f"{sph:+.2f}",
-        "cyl": None if cyl is None else f"{cyl:+.2f}",
-        "axis": axis,
-    }
+    normalized = {"sph": _fmt(sph), "cyl": _fmt(cyl) if cyl_ok else None, "axis": axis}
+    parsed = {"sph": sph, "cyl": cyl if cyl_ok else None, "axis": axis,
+              "ok": not errors}
+    return errors, normalized, parsed
+
+
+def validate_eye(eye, data):
+    """Validate one eye. Returns (errors, normalized). v1 contract signature."""
+    errors, normalized, _ = _validate_eye_full(eye, data)
     return errors, normalized
 
 
-def _warning(eye, field, code, message):
-    return {"eye": eye, "field": field, "code": code, "message": message}
+# ---- Cross-eye: summary, warnings, scores -----------------------------------
+def spherical_equivalent(sph, cyl):
+    return sph + (cyl or 0.0) / 2
 
 
-def _empty_summary():
-    return {"se": None, "transposed": {"sph": None, "cyl": None, "axis": None}}
+def transpose(sph, cyl, axis):
+    """Switch between plus- and minus-cylinder notation (same optical lens)."""
+    cyl = cyl or 0.0
+    new_axis = None
+    if axis is not None and cyl != 0:
+        new_axis = axis + 90 if axis <= 90 else axis - 90
+    return {"sph": _fmt(sph + cyl), "cyl": _fmt(-cyl), "axis": new_axis}
 
 
-def _summarize_eye(norm):
-    """Spherical equivalent + minus-cyl transposed form (2.5). Only called
-    when this eye's normalized values have no errors."""
-    sph = float(norm["sph"])
-    cyl = float(norm["cyl"]) if norm["cyl"] is not None else 0.0
-    axis = norm["axis"]
-    se = sph + cyl / 2
-    t_sph = sph + cyl
-    t_cyl = -cyl if cyl else 0.0  # avoid "-0.00" when cyl is 0.0 (-0.0 negated stays -0.0)
-    t_axis = None
-    if axis is not None:
-        flipped = axis + 90
-        t_axis = flipped if flipped <= AXIS_MAX else axis - 90
-    return {"se": f"{se:+.2f}",
-            "transposed": {"sph": f"{t_sph:+.2f}", "cyl": f"{t_cyl:+.2f}", "axis": t_axis}}
+def _summary(p):
+    if not p.get("ok") or p.get("sph") is None:
+        return {"se": None, "transposed": {"sph": None, "cyl": None, "axis": None}}
+    return {"se": _fmt(spherical_equivalent(p["sph"], p["cyl"])),
+            "transposed": transpose(p["sph"], p["cyl"], p["axis"])}
 
 
-def _eye_warnings(eye, norm):
-    """HIGH_POWER and PLUS_CYL warnings for one eye (2.4). Only called when
-    this eye's normalized values have no errors."""
-    Eye = eye.capitalize()
-    sph = float(norm["sph"])
-    cyl = float(norm["cyl"]) if norm["cyl"] is not None else 0.0
-    warnings = []
-    breaches = []
-    if abs(sph) >= HIGH_POWER_SPH:
-        breaches.append(f"SPH {sph:+.2f} D")
-    if abs(cyl) >= HIGH_POWER_CYL:
-        breaches.append(f"CYL {cyl:+.2f} D")
-    if breaches:
-        field = "sph" if abs(sph) >= HIGH_POWER_SPH else "cyl"
-        warnings.append(_warning(eye, field, "HIGH_POWER",
-            f"{Eye} eye high power: {', '.join(breaches)} (threshold {HIGH_POWER_SPH:.2f} D SPH / "
-            f"{HIGH_POWER_CYL:.2f} D CYL) -- unusually high, double-check."))
-    if cyl > 0:
-        warnings.append(_warning(eye, "cyl", "PLUS_CYL",
-            f"{Eye} eye CYL is plus-cyl notation ({cyl:+.2f} D), accepted -- see summary for the "
-            f"minus-cyl transposed form."))
-    return warnings
+def _warnings(parsed):
+    w = []
+    for eye in EYES:
+        p = parsed[eye]
+        if not p.get("ok"):
+            continue
+        Eye = eye.capitalize()
+        if abs(p["sph"]) >= HIGH_POWER_SPH:
+            w.append(_warning(eye, "sph", "HIGH_POWER",
+                f"{Eye} eye SPH magnitude is {abs(p['sph']):.2f} D (threshold {HIGH_POWER_SPH:.2f} D): unusually high, double-check against the original Rx."))
+        if abs(p["cyl"]) >= HIGH_POWER_CYL:
+            w.append(_warning(eye, "cyl", "HIGH_POWER",
+                f"{Eye} eye CYL magnitude is {abs(p['cyl']):.2f} D (threshold {HIGH_POWER_CYL:.2f} D): unusually high, double-check against the original Rx."))
+        if p["cyl"] > 0:
+            w.append(_warning(eye, "cyl", "PLUS_CYL",
+                f"{Eye} eye uses plus-cylinder notation (CYL {_fmt(p['cyl'])}). Accepted; minus-cyl equivalent is shown in the summary."))
 
-
-def _cross_eye_warnings(right_summary, left_summary):
-    """ANISOMETROPIA and ANTIMETROPIA warnings (2.4). Only called when both
-    eyes have a computed spherical equivalent (no errors on either eye)."""
-    se_r = float(right_summary["se"])
-    se_l = float(left_summary["se"])
-    warnings = []
-    delta = abs(se_r - se_l)
-    if delta >= ANISOMETROPIA_SE_DELTA:
-        warnings.append(_warning(None, None, "ANISOMETROPIA",
-            f"Spherical equivalents differ by {delta:.2f} D (threshold {ANISOMETROPIA_SE_DELTA:.2f} D): "
-            f"Right SE {se_r:+.2f}, Left SE {se_l:+.2f}."))
-    if (se_r <= -ANTIMETROPIA_SE and se_l >= ANTIMETROPIA_SE) or \
-       (se_l <= -ANTIMETROPIA_SE and se_r >= ANTIMETROPIA_SE):
-        warnings.append(_warning(None, None, "ANTIMETROPIA",
-            f"One eye is myopic and the other hyperopic (threshold +/-{ANTIMETROPIA_SE:.2f} D SE): "
-            f"Right SE {se_r:+.2f}, Left SE {se_l:+.2f}."))
-    return warnings
+    r, l = parsed["right"], parsed["left"]
+    if r.get("ok") and l.get("ok"):
+        se_r, se_l = spherical_equivalent(r["sph"], r["cyl"]), spherical_equivalent(l["sph"], l["cyl"])
+        diff = abs(se_r - se_l)
+        if diff >= ANISOMETROPIA_SE_DELTA:
+            w.append(_warning(None, None, "ANISOMETROPIA",
+                f"Spherical equivalents differ by {diff:.2f} D (threshold {ANISOMETROPIA_SE_DELTA:.2f} D): Right SE {_fmt(se_r)}, Left SE {_fmt(se_l)}."))
+        if (se_r <= -ANTIMETROPIA_SE and se_l >= ANTIMETROPIA_SE) or (se_l <= -ANTIMETROPIA_SE and se_r >= ANTIMETROPIA_SE):
+            w.append(_warning(None, None, "ANTIMETROPIA",
+                f"One eye is myopic and the other hyperopic (Right SE {_fmt(se_r)}, Left SE {_fmt(se_l)}, threshold +/-{ANTIMETROPIA_SE:.2f} D)."))
+        if r["cyl"] * l["cyl"] < 0:
+            w.append(_warning(None, None, "MIXED_CYL_NOTATION",
+                f"Right CYL {_fmt(r['cyl'])} and Left CYL {_fmt(l['cyl'])} use different notations (one plus, one minus). Usually a transcription slip; check the original Rx."))
+    return w
 
 
 def _plausibility(warnings):
-    """Heuristic 0..100 score from fixed per-warning penalties (2.6). Not ML."""
-    score = SCORE_START
-    reasons = []
+    score, reasons = SCORE_START, []
     for w in warnings:
-        penalty = SCORE_PENALTY.get(w["code"])
-        if penalty:
-            score -= penalty
-            reasons.append(f"{w['code']}: {w['message']} (-{penalty})")
+        pts = SCORE_PENALTY.get(w["code"], 0)
+        if pts:
+            score -= pts
+            where = f"{w['eye']} eye {w['field'].upper()}" if w["eye"] else "both eyes"
+            reasons.append(f"{w['code']}: {where} (-{pts})")
     score = max(0, score)
-    if score >= BAND_TYPICAL_MIN:
-        band = "typical"
-    elif score >= BAND_DOUBLE_CHECK_MIN:
-        band = "double_check"
-    else:
-        band = "verify"
+    band = "typical" if score >= BAND_TYPICAL else "double_check" if score >= BAND_DOUBLE_CHECK else "verify"
     return {"score": score, "band": band, "reasons": reasons}
 
 
-def validate_prescription(payload):
-    """Validate both eyes and build the full v2 response. Never raises."""
-    default_plausibility = {"score": SCORE_START, "band": "typical", "reasons": []}
+NEUTRAL_PLAUSIBILITY = {"score": 100, "band": "typical", "reasons": []}
 
+
+def validate_prescription(payload):
+    """Validate both eyes. Never raises. Returns the v2 response shape."""
+    errors = []
     if not isinstance(payload, dict):
-        errors = []
         for eye in EYES:
             errors.append(_error(eye, "eye", "MISSING_EYE",
                 f"{eye.capitalize()} eye data is missing, request must be an object with 'right' and 'left'."))
         return {"valid": False, "errors": errors, "warnings": [], "normalized": {},
-                "summary": {}, "plausibility": default_plausibility}
+                "summary": {}, "plausibility": dict(NEUTRAL_PLAUSIBILITY), "anomaly": None}
 
-    errors = []
-    normalized = {}
-    eye_ok = {}
+    eyes_in = {}
+    for k, v in payload.items():
+        eye = EYE_ALIASES.get(str(k).strip().lower())
+        if eye and eye not in eyes_in:
+            eyes_in[eye] = v
+
+    normalized, parsed = {}, {}
     for eye in EYES:
-        eye_errors, eye_norm = validate_eye(eye, payload.get(eye))
-        errors.extend(eye_errors)
-        normalized[eye] = eye_norm
-        eye_ok[eye] = len(eye_errors) == 0
+        e_err, e_norm, e_parsed = _validate_eye_full(eye, eyes_in.get(eye))
+        errors.extend(e_err)
+        normalized[eye], parsed[eye] = e_norm, e_parsed
 
-    summary = {}
-    warnings = []
-    for eye in EYES:
-        if eye_ok[eye]:
-            summary[eye] = _summarize_eye(normalized[eye])
-            warnings.extend(_eye_warnings(eye, normalized[eye]))
-        else:
-            summary[eye] = _empty_summary()
+    warnings = _warnings(parsed)
+    both_ok = parsed["right"].get("ok") and parsed["left"].get("ok")
+    return {
+        "valid": not errors,
+        "errors": errors,
+        "warnings": warnings,
+        "normalized": normalized,
+        "summary": {eye: _summary(parsed[eye]) for eye in EYES},
+        "plausibility": _plausibility(warnings),
+        "anomaly": anomaly.score(parsed["right"], parsed["left"]) if both_ok else None,
+    }
 
-    if eye_ok["right"] and eye_ok["left"]:
-        warnings.extend(_cross_eye_warnings(summary["right"], summary["left"]))
 
-    plausibility = _plausibility(warnings)
-    return {"valid": len(errors) == 0, "errors": errors, "warnings": warnings,
-            "normalized": normalized, "summary": summary, "plausibility": plausibility}
+def rules():
+    """Public constants so the UI never hardcodes ranges (single source of truth)."""
+    return {"sph": {"min": SPH_MIN, "max": SPH_MAX, "step": STEP},
+            "cyl": {"min": CYL_MIN, "max": CYL_MAX, "step": STEP},
+            "axis": {"min": AXIS_MIN, "max": AXIS_MAX, "step": 1},
+            "max_input_len": MAX_INPUT_LEN,
+            "warnings": {"high_power_sph": HIGH_POWER_SPH, "high_power_cyl": HIGH_POWER_CYL,
+                         "anisometropia_se_delta": ANISOMETROPIA_SE_DELTA, "antimetropia_se": ANTIMETROPIA_SE},
+            "anomaly_model": anomaly.model_info()}
 
 
 if __name__ == "__main__":
     import json
-    samples = [
-        {"right": {"sph": "-1.25", "cyl": "-0.50", "axis": "90"},
-         "left": {"sph": "plano", "cyl": "", "axis": ""}},
-        {"right": {"sph": "25", "cyl": "-1", "axis": ""},
-         "left": {"sph": "abc", "cyl": "0", "axis": "200"}},
+    for s in [
+        {"right": {"sph": "-1.25", "cyl": "-0.50", "axis": "180"}, "left": {"sph": "-1.00", "cyl": "-0.75", "axis": "5"}},
+        {"OD": {"SPH": "125", "CYL": "90", "AXIS": ""}, "OS": {"sph": "1.30", "cyl": "-1", "axis": "0"}},
         None,
-    ]
-    for s in samples:
+    ]:
         print(json.dumps(validate_prescription(s), indent=2))

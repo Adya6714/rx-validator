@@ -7,7 +7,7 @@
     <style>
       body {
         font-family: system-ui, sans-serif;
-        max-width: 760px;
+        max-width: 640px;
         margin: 40px auto;
         padding: 0 16px;
         color: #222;
@@ -15,91 +15,25 @@
       h1 {
         font-size: 22px;
       }
-      h2 {
-        font-size: 16px;
-        margin: 24px 0 8px;
-      }
-      .visually-hidden {
-        position: absolute;
-        width: 1px;
-        height: 1px;
-        overflow: hidden;
-        clip: rect(0 0 0 0);
-        white-space: nowrap;
-      }
-      .paste-row {
-        display: flex;
-        gap: 8px;
-        align-items: center;
-        margin: 12px 0 20px;
-        flex-wrap: wrap;
-      }
-      .paste-row input[type="text"] {
-        flex: 1;
-        min-width: 220px;
-      }
       table {
         border-collapse: collapse;
         margin: 16px 0;
-        width: 100%;
       }
       th,
       td {
         padding: 6px 8px;
         text-align: left;
-        vertical-align: top;
       }
-      .field-wrap {
-        display: flex;
-        align-items: center;
-        gap: 4px;
-      }
-      input[type="text"] {
+      input {
         width: 90px;
         padding: 6px;
-        border: 2px solid #bbb;
+        border: 1px solid #bbb;
         border-radius: 4px;
         font-size: 14px;
       }
-      input:focus-visible,
-      button:focus-visible,
-      select:focus-visible {
-        outline: 3px solid #1a5fd0;
-        outline-offset: 1px;
-      }
-      input.state-bad {
-        border-color: #d33;
+      input.bad {
+        border: 2px solid #d33;
         background: #fff3f3;
-      }
-      input.state-warn {
-        border-color: #c98a00;
-        background: #fffaf0;
-      }
-      input.state-ok {
-        border-color: #3a9b5c;
-        background: #f3fbf5;
-      }
-      .stepper {
-        display: flex;
-        flex-direction: column;
-      }
-      .stepper button {
-        padding: 0 4px;
-        font-size: 10px;
-        line-height: 1.3;
-        margin: 0;
-      }
-      .field-msg {
-        font-size: 11px;
-        min-height: 14px;
-        margin-top: 3px;
-        max-width: 160px;
-      }
-      .field-msg.bad {
-        color: #b00;
-      }
-      .field-msg.warn {
-        color: #a66a00;
       }
       button {
         padding: 8px 12px;
@@ -113,19 +47,6 @@
         background: #1a5fd0;
         color: #fff;
         border-color: #1a5fd0;
-      }
-      button.small {
-        padding: 2px 6px;
-        font-size: 11px;
-        margin: 2px 0 0;
-      }
-      button.fix {
-        background: #eaf2ff;
-        border-color: #1a5fd0;
-        color: #1a5fd0;
-      }
-      .toolbar {
-        margin-top: 10px;
       }
       #result {
         margin-top: 20px;
@@ -143,291 +64,88 @@
         background: #fdeeee;
         border: 1px solid #d33;
       }
-      #result ul {
-        margin: 6px 0 0 18px;
-        padding: 0;
-      }
       code {
         font-size: 12px;
         color: #666;
       }
-      .dial {
-        width: 70px;
-        height: 42px;
-      }
-      #summaryCard {
-        display: none;
-        margin-top: 16px;
-        padding: 12px;
-        border: 1px solid #ccc;
-        border-radius: 6px;
-        background: #fafafa;
-      }
-      #summaryCard.show {
-        display: block;
-      }
-      .summary-cols {
-        display: flex;
-        gap: 24px;
-        flex-wrap: wrap;
-      }
-      .summary-cols > div {
-        min-width: 180px;
-      }
-      .score-bar-track {
-        height: 10px;
-        border-radius: 5px;
-        background: #e2e2e2;
-        overflow: hidden;
-        margin: 6px 0;
-      }
-      .score-bar-fill {
-        height: 100%;
-      }
-      .band-typical {
-        background: #3a9b5c;
-      }
-      .band-double_check {
-        background: #c98a00;
-      }
-      .band-verify {
-        background: #d33;
-      }
-      .reasons {
-        font-size: 12px;
-        margin: 4px 0 0 18px;
-        padding: 0;
-      }
+      .panel { margin-top: 12px; padding: 10px 12px; border-radius: 6px; border: 1px solid #ccc; }
+      .panel.warn { background: #fff8e6; border-color: #d9a400; }
+      .panel h3 { margin: 0 0 6px; font-size: 15px; }
+      .fix { margin-left: 6px; padding: 2px 8px; font-size: 12px; }
+      .bar { height: 10px; border-radius: 5px; background: #e5e5e5; overflow: hidden; margin: 4px 0; }
+      .bar > span { display: block; height: 100%; }
     </style>
   </head>
   <body>
     <h1>Lenskart Rx Validator</h1>
     <p>
       Enter SPH, CYL and Axis for each eye. CYL and Axis can be blank if there
-      is no astigmatism. Use ArrowUp/ArrowDown on a field to step it, or the
-      +/- buttons.
+      is no astigmatism.
     </p>
 
-    <div class="paste-row">
-      <label for="pasteEye" class="visually-hidden">Eye to fill from pasted text</label>
-      <select id="pasteEye">
-        <option value="right">Right (OD)</option>
-        <option value="left">Left (OS)</option>
-      </select>
-      <label for="pasteText" class="visually-hidden">Paste prescription notation</label>
-      <input
-        type="text"
-        id="pasteText"
-        placeholder='Paste e.g. "-1.25 -0.50 x 90" or "-1.25/-0.50x90"'
-      />
-      <button type="button" id="parseBtn">Parse into eye</button>
-    </div>
+    <table>
+      <tr>
+        <th></th>
+        <th>SPH</th>
+        <th>CYL</th>
+        <th>Axis</th>
+      </tr>
+      <tr>
+        <td><b>Right (OD)</b></td>
+        <td><input type="text" id="right-sph" /></td>
+        <td><input type="text" id="right-cyl" /></td>
+        <td><input type="text" id="right-axis" /></td>
+      </tr>
+      <tr>
+        <td><b>Left (OS)</b></td>
+        <td><input type="text" id="left-sph" /></td>
+        <td><input type="text" id="left-cyl" /></td>
+        <td><input type="text" id="left-axis" /></td>
+      </tr>
+    </table>
 
-    <form id="rxForm">
-      <table>
-        <tr>
-          <th></th>
-          <th>SPH</th>
-          <th>CYL</th>
-          <th>Axis</th>
-          <th>Dial</th>
-        </tr>
-        <tr>
-          <td><b>Right (OD)</b></td>
-          <td id="cell-right-sph"></td>
-          <td id="cell-right-cyl"></td>
-          <td id="cell-right-axis"></td>
-          <td><svg class="dial" id="dial-right" viewBox="0 0 70 42"></svg></td>
-        </tr>
-        <tr>
-          <td><b>Left (OS)</b></td>
-          <td id="cell-left-sph"></td>
-          <td id="cell-left-cyl"></td>
-          <td id="cell-left-axis"></td>
-          <td><svg class="dial" id="dial-left" viewBox="0 0 70 42"></svg></td>
-        </tr>
-      </table>
+    <button class="primary" onclick="validateRx()">Validate</button>
+    <button onclick="fill(VALID)">Fill valid sample</button>
+    <button onclick="fill(BAD)">Fill bad sample</button>
+    <button onclick="fill(TYPO)">Fill typo sample</button>
+    <button onclick="fill(UNUSUAL)">Fill unusual sample</button>
+    <button onclick="fill(EMPTY)">Clear</button>
 
-      <div class="toolbar">
-        <button class="primary" type="submit">Validate</button>
-        <button type="button" onclick="fill(VALID)">Fill valid sample</button>
-        <button type="button" onclick="fill(BAD)">Fill bad sample</button>
-        <button type="button" onclick="copyRightToLeft()">Copy Right to Left</button>
-        <button type="button" onclick="fill(EMPTY)">Clear</button>
-      </div>
-    </form>
-
-    <div id="result" aria-live="polite"></div>
-
-    <div id="summaryCard" aria-live="polite">
-      <h2>Summary</h2>
-      <div class="summary-cols">
-        <div>
-          <b>Right</b>
-          <div id="summary-right"></div>
-        </div>
-        <div>
-          <b>Left</b>
-          <div id="summary-left"></div>
-        </div>
-      </div>
-      <h2>Plausibility</h2>
-      <div id="plausibility"></div>
-    </div>
+    <div id="result"></div>
 
     <script>
       const EYES = ["right", "left"];
       const FIELDS = ["sph", "cyl", "axis"];
-      const STEP = { sph: 0.25, cyl: 0.25, axis: 1 };
-      const BAND_LABEL = {
-        typical: "Typical",
-        double_check: "Double-check",
-        verify: "Verify against original Rx",
-      };
       const VALID = {
         right: ["-1.25", "-0.50", "90"],
         left: ["plano", "", ""],
       };
       const BAD = { right: ["25", "-1.00", ""], left: ["abc", "0", "200"] };
       const EMPTY = { right: ["", "", ""], left: ["", "", ""] };
-
-      let lastResult = null;
-
-      // --- build the input cells (label + input + stepper) once ---------------
-      EYES.forEach((eye) => {
-        FIELDS.forEach((field) => {
-          const cell = document.getElementById(`cell-${eye}-${field}`);
-          const id = `${eye}-${field}`;
-          const labelText = `${eye === "right" ? "Right" : "Left"} eye ${field.toUpperCase()}`;
-
-          const label = document.createElement("label");
-          label.setAttribute("for", id);
-          label.className = "visually-hidden";
-          label.textContent = labelText;
-
-          const wrap = document.createElement("div");
-          wrap.className = "field-wrap";
-
-          const input = document.createElement("input");
-          input.type = "text";
-          input.id = id;
-          input.name = id;
-          input.autocomplete = "off";
-          input.maxLength = 20; // Phase 4.1: mirrors the backend's TOO_LONG cap
-
-          const stepper = document.createElement("div");
-          stepper.className = "stepper";
-          const up = document.createElement("button");
-          up.type = "button";
-          up.className = "small";
-          up.textContent = "▲";
-          up.setAttribute("aria-label", `Increase ${labelText}`);
-          up.onclick = () => step(eye, field, 1);
-          const down = document.createElement("button");
-          down.type = "button";
-          down.className = "small";
-          down.textContent = "▼";
-          down.setAttribute("aria-label", `Decrease ${labelText}`);
-          down.onclick = () => step(eye, field, -1);
-          stepper.appendChild(up);
-          stepper.appendChild(down);
-
-          wrap.appendChild(input);
-          wrap.appendChild(stepper);
-
-          const msg = document.createElement("div");
-          msg.className = "field-msg";
-          msg.id = `${id}-msg`;
-
-          cell.appendChild(label);
-          cell.appendChild(wrap);
-          cell.appendChild(msg);
-
-          input.addEventListener("input", () => debouncedValidate());
-          input.addEventListener("keydown", (e) => {
-            if (e.key === "ArrowUp") {
-              e.preventDefault();
-              step(eye, field, 1);
-            } else if (e.key === "ArrowDown") {
-              e.preventDefault();
-              step(eye, field, -1);
-            }
-          });
-        });
-      });
-
-      function debounce(fn, ms) {
-        let t;
-        return (...args) => {
-          clearTimeout(t);
-          t = setTimeout(() => fn(...args), ms);
-        };
-      }
-      const debouncedValidate = debounce(validateRx, 300);
-
-      function fmtPower(v) {
-        return (v >= 0 ? "+" : "") + v.toFixed(2);
-      }
-
-      function step(eye, field, direction) {
-        const el = document.getElementById(`${eye}-${field}`);
-        const current = parseFloat(el.value);
-        const base = isNaN(current) ? 0 : current;
-        const next = base + direction * STEP[field];
-        el.value = field === "axis" ? String(Math.round(next)) : fmtPower(next);
-        validateRx();
-      }
+      const TYPO = { right: ["125", "90", ""], left: ["1.30", "-1.00", "0"] };
+      const UNUSUAL = { right: ["-1.00", "-1.50", "45"], left: ["-1.00", "-1.50", "45"] };
+      document.addEventListener("keydown", (e) => { if (e.key === "Enter") validateRx(); });
 
       function fill(sample) {
         EYES.forEach((eye) =>
           FIELDS.forEach((f, i) => {
-            document.getElementById(`${eye}-${f}`).value = sample[eye][i];
+            document.getElementById(eye + "-" + f).value = sample[eye][i];
           }),
         );
-        validateRx();
+        clearMarks();
+        show("", "");
       }
-
-      function copyRightToLeft() {
-        FIELDS.forEach((f) => {
-          document.getElementById(`left-${f}`).value =
-            document.getElementById(`right-${f}`).value;
-        });
-        validateRx();
-      }
-
-      function parsePaste(text) {
-        if (!text || !text.trim()) return null;
-        const parts = text.split(/x/i);
-        const left = parts[0].trim();
-        const axisStr = parts.length > 1 ? parts[1].trim() : "";
-        const tokens = left.split(/[\/\s]+/).filter(Boolean);
-        if (tokens.length === 0) return null;
-        const sph = tokens[0];
-        const cyl = tokens.length > 1 ? tokens[1] : "";
-        const axis = axisStr.replace(/[^\d]/g, "");
-        return { sph, cyl, axis };
-      }
-
-      document.getElementById("parseBtn").addEventListener("click", () => {
-        const eye = document.getElementById("pasteEye").value;
-        const parsed = parsePaste(document.getElementById("pasteText").value);
-        if (!parsed) return;
-        document.getElementById(`${eye}-sph`).value = parsed.sph || "";
-        document.getElementById(`${eye}-cyl`).value = parsed.cyl || "";
-        document.getElementById(`${eye}-axis`).value = parsed.axis || "";
-        validateRx();
-      });
 
       function clearMarks() {
-        EYES.forEach((eye) =>
-          FIELDS.forEach((f) => {
-            const el = document.getElementById(`${eye}-${f}`);
-            el.classList.remove("state-bad", "state-warn", "state-ok");
-            const msg = document.getElementById(`${eye}-${f}-msg`);
-            msg.textContent = "";
-            msg.className = "field-msg";
-          }),
-        );
+        document
+          .querySelectorAll("input")
+          .forEach((el) => el.classList.remove("bad"));
+      }
+
+      function show(cls, html) {
+        const box = document.getElementById("result");
+        box.className = cls;
+        box.innerHTML = html;
       }
 
       function esc(s) {
@@ -437,90 +155,20 @@
         );
       }
 
-      function show(cls, html) {
-        const box = document.getElementById("result");
-        box.className = cls;
-        box.innerHTML = html;
-      }
-
-      function applyFix(field, value) {
-        document.getElementById(field).value = value;
+      function applyFix(eye, field, value) {
+        document.getElementById(eye + "-" + field).value = value;
         validateRx();
       }
 
-      function setFieldState(eye, field, state, message) {
-        const el = document.getElementById(`${eye}-${field}`);
-        el.classList.remove("state-bad", "state-warn", "state-ok");
-        if (state) el.classList.add(`state-${state}`);
-        const msg = document.getElementById(`${eye}-${field}-msg`);
-        msg.className = "field-msg" + (state === "bad" ? " bad" : state === "warn" ? " warn" : "");
-        msg.textContent = message || "";
-      }
-
-      // --- axis dial ------------------------------------------------------------
-      function drawDialBase(svg) {
-        svg.innerHTML =
-          '<path d="M 5 38 A 30 30 0 0 1 65 38" fill="none" stroke="#ccc" stroke-width="2"/>' +
-          '<circle cx="35" cy="38" r="2" fill="#888"/>';
-      }
-      EYES.forEach((eye) => drawDialBase(document.getElementById(`dial-${eye}`)));
-
-      function updateDial(eye, axis) {
-        const svg = document.getElementById(`dial-${eye}`);
-        drawDialBase(svg);
-        if (axis === null || axis === undefined || isNaN(axis)) return;
-        const rad = (axis * Math.PI) / 180;
-        const r = 28;
-        const cx = 35,
-          cy = 38;
-        const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-        line.setAttribute("x1", cx - r * Math.cos(rad));
-        line.setAttribute("y1", cy - r * Math.sin(rad));
-        line.setAttribute("x2", cx + r * Math.cos(rad));
-        line.setAttribute("y2", cy + r * Math.sin(rad));
-        line.setAttribute("stroke", "#1a5fd0");
-        line.setAttribute("stroke-width", "2");
-        svg.appendChild(line);
-      }
-
-      // --- summary / plausibility rendering --------------------------------------
-      function renderSummary(data) {
-        const card = document.getElementById("summaryCard");
-        const summary = data && data.summary;
-        const plausibility = data && data.plausibility;
-        if (!summary || !plausibility) {
-          card.classList.remove("show");
-          return;
-        }
-        card.classList.add("show");
-        EYES.forEach((eye) => {
-          const s = summary[eye] || {};
-          const t = s.transposed || {};
-          const el = document.getElementById(`summary-${eye}`);
-          el.innerHTML =
-            `SE: ${s.se != null ? esc(s.se) : "-"}<br>` +
-            `Transposed: SPH ${t.sph != null ? esc(t.sph) : "-"}, ` +
-            `CYL ${t.cyl != null ? esc(t.cyl) : "-"}, ` +
-            `Axis ${t.axis != null ? esc(t.axis) : "-"}`;
-        });
-        const band = plausibility.band || "typical";
-        const score = plausibility.score != null ? plausibility.score : 100;
-        const reasons = plausibility.reasons || [];
-        document.getElementById("plausibility").innerHTML =
-          `Score: ${score}/100 — ${esc(BAND_LABEL[band] || band)}` +
-          `<div class="score-bar-track"><div class="score-bar-fill band-${band}" style="width:${score}%"></div></div>` +
-          (reasons.length
-            ? `<ul class="reasons">${reasons.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>`
-            : "");
-      }
-
-      // --- main validate call ----------------------------------------------------
       async function validateRx() {
         clearMarks();
         const payload = {};
         EYES.forEach((eye) => {
           payload[eye] = {};
-          FIELDS.forEach((f) => (payload[eye][f] = document.getElementById(`${eye}-${f}`).value));
+          FIELDS.forEach(
+            (f) =>
+              (payload[eye][f] = document.getElementById(eye + "-" + f).value),
+          );
         });
 
         let data;
@@ -535,65 +183,54 @@
           show("err", "Could not reach the server. Is it running?");
           return;
         }
-        lastResult = data;
 
-        EYES.forEach((eye) => updateDial(eye, document.getElementById(`${eye}-axis`).value ? parseInt(document.getElementById(`${eye}-axis`).value, 10) : NaN));
-
-        // field states: errors win over warnings win over "has a value" ok state
-        const errors = data.errors || [];
-        const warnings = data.warnings || [];
-        EYES.forEach((eye) =>
-          FIELDS.forEach((f) => {
-            const value = document.getElementById(`${eye}-${f}`).value;
-            if (!value) return;
-            setFieldState(eye, f, "ok", "");
-          }),
-        );
-        warnings.forEach((w) => {
-          if (w.eye && w.field) setFieldState(w.eye, w.field, "warn", w.message);
-        });
-        errors.forEach((e) => {
-          if (e.eye && e.field) setFieldState(e.eye, e.field, "bad", e.message);
-        });
-
-        renderSummary(data);
-
+        const parts = [];
         if (data.valid) {
           const n = data.normalized;
           const line = (eye) =>
             `${eye === "right" ? "Right" : "Left"}: SPH ${n[eye].sph}, CYL ${n[eye].cyl}, Axis ${n[eye].axis ?? "-"}`;
-          let html = `<b>Prescription is valid.</b><br>${line("right")}<br>${line("left")}`;
-          if (warnings.length) {
-            html += `<br><br><b>${warnings.length} clinical note(s):</b><ul>${warnings
-              .map((w) => `<li>${esc(w.message)} <code>${esc(w.code)}</code></li>`)
-              .join("")}</ul>`;
-          }
-          show("ok", html);
-          return;
+          parts.push(`<b>Prescription is valid.</b><br>${line("right")}<br>${line("left")}`);
+        } else {
+          const items = (data.errors || []).map((e, i) => {
+            const el = e.eye && document.getElementById(e.eye + "-" + e.field);
+            if (el) el.classList.add("bad");
+            const fix = e.suggestion && e.eye
+              ? `<button class="fix" onclick='applyFix(${JSON.stringify(e.eye)}, ${JSON.stringify(e.suggestion.field)}, ${JSON.stringify(String(e.suggestion.value))})'>Apply fix: ${esc(e.suggestion.value === "" ? "clear" : e.suggestion.value)}</button><br><small>${esc(e.suggestion.reason)}</small>`
+              : "";
+            return `<li>${esc(e.message)} <code>${esc(e.code)}</code>${fix}</li>`;
+          }).join("");
+          parts.push(`<b>Prescription has ${data.errors.length} problem(s):</b><ul>${items}</ul>`);
         }
-
-        const items = errors
-          .map((e) => {
-            const fixBtn =
-              e.suggestion && e.eye
-                ? ` <button type="button" class="small fix" onclick="applyFix('${e.eye}-${e.suggestion.field}', '${esc(e.suggestion.value)}')">Apply fix: ${esc(e.suggestion.value)}</button>`
-                : "";
-            return `<li>${esc(e.message)} <code>${esc(e.code)}</code>${fixBtn}</li>`;
-          })
-          .join("");
-        let html = `<b>Prescription has ${errors.length} problem(s):</b><ul>${items}</ul>`;
-        if (warnings.length) {
-          html += `<b>${warnings.length} clinical note(s):</b><ul>${warnings
-            .map((w) => `<li>${esc(w.message)} <code>${esc(w.code)}</code></li>`)
-            .join("")}</ul>`;
+        if (data.warnings && data.warnings.length) {
+          parts.push(`<div class="panel warn"><h3>Clinical warnings (do not block)</h3><ul>${data.warnings
+            .map((w) => `<li>${esc(w.message)} <code>${esc(w.code)}</code></li>`).join("")}</ul></div>`);
         }
-        show("err", html);
+        if (data.summary && data.summary.right && data.summary.right.se !== undefined) {
+          const row = (eye) => {
+            const s = data.summary[eye];
+            if (!s || s.se === null) return `<li>${eye}: not available until the eye is valid</li>`;
+            const t = s.transposed;
+            return `<li>${eye === "right" ? "Right" : "Left"}: SE ${s.se}; transposed ${t.sph} / ${t.cyl} x ${t.axis ?? "-"}</li>`;
+          };
+          parts.push(`<div class="panel"><h3>Summary</h3><ul>${row("right")}${row("left")}</ul></div>`);
+        }
+        if (data.plausibility) {
+          const p = data.plausibility;
+          const col = p.band === "typical" ? "#3a9b5c" : p.band === "double_check" ? "#d9a400" : "#d33";
+          parts.push(`<div class="panel"><h3>Rule-based plausibility: ${p.score}/100 (${esc(p.band)})</h3>
+            <div class="bar"><span style="width:${p.score}%;background:${col}"></span></div>
+            ${p.reasons.length ? "<ul>" + p.reasons.map((r) => `<li>${esc(r)}</li>`).join("") + "</ul>" : ""}</div>`);
+        }
+        if (data.anomaly) {
+          const a = data.anomaly;
+          const col = a.band === "typical" ? "#3a9b5c" : a.band === "uncommon" ? "#d9a400" : "#d33";
+          parts.push(`<div class="panel"><h3>ML anomaly model: typicality ${a.typicality}/100 (${esc(a.band)})</h3>
+            <div class="bar"><span style="width:${Math.max(a.typicality, 2)}%;background:${col}"></span></div>
+            ${a.top_factors.length ? "<ul>" + a.top_factors.map((f) => `<li>${esc(f.label)}: ${f.value} (z ${f.z}, ${esc(f.note)})</li>`).join("") + "</ul>" : "<small>No unusual factors.</small>"}
+            <small>Model: ${esc(a.model)}</small></div>`);
+        }
+        show(data.valid ? "ok" : "err", parts.join(""));
       }
-
-      document.getElementById("rxForm").addEventListener("submit", (e) => {
-        e.preventDefault();
-        validateRx();
-      });
     </script>
   </body>
 </html>

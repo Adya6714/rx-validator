@@ -14,12 +14,8 @@ HIGH_POWER_CYL = 4.0    (|CYL| >= this triggers HIGH_POWER)
 ANISOMETROPIA_SE_DELTA = 2.00   (|SE right - SE left| >= this triggers ANISOMETROPIA)
 ANTIMETROPIA_SE = 1.00   (one eye SE <= -1.00 and the other >= +1.00 triggers ANTIMETROPIA)
 SCORE_START = 100
-SCORE_PENALTY = {"HIGH_POWER": 15, "ANISOMETROPIA": 20, "ANTIMETROPIA": 15}
+SCORE_PENALTY = {"HIGH_POWER": 15, "ANISOMETROPIA": 25, "ANTIMETROPIA": 15, "MIXED_CYL_NOTATION": 10}
 SCORE_BANDS: >=80 "typical", 50..79 "double_check", <50 "verify"
-MAX_INPUT_LEN = 20   (docs/implementation.md 4.1 — raw string inputs longer than
-                      this on sph/cyl/axis are rejected with TOO_LONG before any
-                      parsing is attempted, so a pathological paste can't reach
-                      float() or the suggestion/summary math at all)
 
 ## Functions (app/validator.py) — v1, unchanged
 parse_power(raw) -> tuple[float | None, str | None]
@@ -163,15 +159,9 @@ Only reachable if validate_prescription raises despite its contract never to do
 so. Documented so it isn't a surprise; not expected to ever fire.
 
 ## Error codes
-REQUIRED, NOT_A_NUMBER, OUT_OF_RANGE, BAD_STEP, TOO_LONG,
+REQUIRED, NOT_A_NUMBER, OUT_OF_RANGE, BAD_STEP,
 AXIS_NOT_INTEGER, AXIS_REQUIRED, AXIS_WITHOUT_CYL, MISSING_EYE,
 BAD_REQUEST (HTTP 400 transport-level only), INTERNAL (HTTP 500, defensive only)
-
-TOO_LONG: raw string value for sph/cyl/axis exceeds MAX_INPUT_LEN (20) characters.
-Checked before parsing, so it takes precedence over NOT_A_NUMBER/OUT_OF_RANGE/etc
-for that field. Never carries a suggestion. Message states the field, the 20-char
-limit, and the received length (not the raw value itself, to avoid echoing a
-20+ character string back into an error message).
 
 ## Warning codes
 HIGH_POWER, ANISOMETROPIA, ANTIMETROPIA, PLUS_CYL
@@ -180,3 +170,12 @@ HIGH_POWER, ANISOMETROPIA, ANTIMETROPIA, PLUS_CYL
 Errors: "<Right|Left> eye <SPH|CYL|Axis> <what is wrong>, got <value>."
 Warnings: "<what is wrong>, states the threshold and the received value(s)." (no
 strict eye-prefix requirement for cross-eye warnings since eye is null there)
+
+## v2.1 additions (implemented)
+- Response key `anomaly`: null unless both eyes are valid, else
+  {"typicality": 0..100, "band": "typical"|"uncommon"|"rare", "distance", "top_factors": [...], "features": {...}, "model": "<source>"}
+- Error codes added: TOO_LONG (input > 20 chars), PAYLOAD_TOO_LARGE (HTTP 413, body > 10 KB)
+- Warning code added: MIXED_CYL_NOTATION (one eye plus-cyl, other minus-cyl)
+- Suggestions added: axis 181..360 -> axis-180; axis decimals -> rounded whole number; AXIS_WITHOUT_CYL -> clear axis ("")
+- Eye aliases: right/OD/RE/R and left/OS/LE/L; field aliases sphere/cylinder/ax; keys case-insensitive
+- Endpoints added: GET /rules (constants for UI), POST /validate/batch (array, max 100)
