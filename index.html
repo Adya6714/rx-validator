@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lenskart Rx Validator</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        max-width: 640px;
+        margin: 40px auto;
+        padding: 0 16px;
+        color: #222;
+      }
+      h1 {
+        font-size: 22px;
+      }
+      table {
+        border-collapse: collapse;
+        margin: 16px 0;
+      }
+      th,
+      td {
+        padding: 6px 8px;
+        text-align: left;
+      }
+      input {
+        width: 90px;
+        padding: 6px;
+        border: 1px solid #bbb;
+        border-radius: 4px;
+        font-size: 14px;
+      }
+      input.bad {
+        border: 2px solid #d33;
+        background: #fff3f3;
+      }
+      button {
+        padding: 8px 12px;
+        margin-right: 6px;
+        border: 1px solid #888;
+        border-radius: 4px;
+        background: #f5f5f5;
+        cursor: pointer;
+      }
+      button.primary {
+        background: #1a5fd0;
+        color: #fff;
+        border-color: #1a5fd0;
+      }
+      #result {
+        margin-top: 20px;
+        padding: 12px;
+        border-radius: 6px;
+        display: none;
+      }
+      #result.ok {
+        display: block;
+        background: #eaf7ee;
+        border: 1px solid #3a9b5c;
+      }
+      #result.err {
+        display: block;
+        background: #fdeeee;
+        border: 1px solid #d33;
+      }
+      code {
+        font-size: 12px;
+        color: #666;
+      }
+      .panel { margin-top: 12px; padding: 10px 12px; border-radius: 6px; border: 1px solid #ccc; }
+      .panel.warn { background: #fff8e6; border-color: #d9a400; }
+      .panel h3 { margin: 0 0 6px; font-size: 15px; }
+      .fix { margin-left: 6px; padding: 2px 8px; font-size: 12px; }
+      .bar { height: 10px; border-radius: 5px; background: #e5e5e5; overflow: hidden; margin: 4px 0; }
+      .bar > span { display: block; height: 100%; }
+    </style>
+  </head>
+  <body>
+    <h1>Lenskart Rx Validator</h1>
+    <p>
+      Enter SPH, CYL and Axis for each eye. CYL and Axis can be blank if there
+      is no astigmatism.
+    </p>
+
+    <table>
+      <tr>
+        <th></th>
+        <th>SPH</th>
+        <th>CYL</th>
+        <th>Axis</th>
+      </tr>
+      <tr>
+        <td><b>Right (OD)</b></td>
+        <td><input type="text" id="right-sph" /></td>
+        <td><input type="text" id="right-cyl" /></td>
+        <td><input type="text" id="right-axis" /></td>
+      </tr>
+      <tr>
+        <td><b>Left (OS)</b></td>
+        <td><input type="text" id="left-sph" /></td>
+        <td><input type="text" id="left-cyl" /></td>
+        <td><input type="text" id="left-axis" /></td>
+      </tr>
+    </table>
+
+    <button class="primary" onclick="validateRx()">Validate</button>
+    <button onclick="fill(VALID)">Fill valid sample</button>
+    <button onclick="fill(BAD)">Fill bad sample</button>
+    <button onclick="fill(TYPO)">Fill typo sample</button>
+    <button onclick="fill(UNUSUAL)">Fill unusual sample</button>
+    <button onclick="fill(EMPTY)">Clear</button>
+
+    <div id="result"></div>
+
+    <script>
+      const EYES = ["right", "left"];
+      const FIELDS = ["sph", "cyl", "axis"];
+      const VALID = {
+        right: ["-1.25", "-0.50", "90"],
+        left: ["plano", "", ""],
+      };
+      const BAD = { right: ["25", "-1.00", ""], left: ["abc", "0", "200"] };
+      const EMPTY = { right: ["", "", ""], left: ["", "", ""] };
+      const TYPO = { right: ["125", "90", ""], left: ["1.30", "-1.00", "0"] };
+      const UNUSUAL = { right: ["-1.00", "-1.50", "45"], left: ["-1.00", "-1.50", "45"] };
+      document.addEventListener("keydown", (e) => { if (e.key === "Enter") validateRx(); });
+
+      function fill(sample) {
+        EYES.forEach((eye) =>
+          FIELDS.forEach((f, i) => {
+            document.getElementById(eye + "-" + f).value = sample[eye][i];
+          }),
+        );
+        clearMarks();
+        show("", "");
+      }
+
+      function clearMarks() {
+        document
+          .querySelectorAll("input")
+          .forEach((el) => el.classList.remove("bad"));
+      }
+
+      function show(cls, html) {
+        const box = document.getElementById("result");
+        box.className = cls;
+        box.innerHTML = html;
+      }
+
+      function esc(s) {
+        return String(s).replace(
+          /[&<>"]/g,
+          (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c],
+        );
+      }
+
+      function applyFix(eye, field, value) {
+        document.getElementById(eye + "-" + field).value = value;
+        validateRx();
+      }
+
+      async function validateRx() {
+        clearMarks();
+        const payload = {};
+        EYES.forEach((eye) => {
+          payload[eye] = {};
+          FIELDS.forEach(
+            (f) =>
+              (payload[eye][f] = document.getElementById(eye + "-" + f).value),
+          );
+        });
+
+        let data;
+        try {
+          const res = await fetch("/validate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          data = await res.json();
+        } catch (e) {
+          show("err", "Could not reach the server. Is it running?");
+          return;
+        }
+
+        const parts = [];
+        if (data.valid) {
+          const n = data.normalized;
+          const line = (eye) =>
+            `${eye === "right" ? "Right" : "Left"}: SPH ${n[eye].sph}, CYL ${n[eye].cyl}, Axis ${n[eye].axis ?? "-"}`;
+          parts.push(`<b>Prescription is valid.</b><br>${line("right")}<br>${line("left")}`);
+        } else {
+          const items = (data.errors || []).map((e, i) => {
+            const el = e.eye && document.getElementById(e.eye + "-" + e.field);
+            if (el) el.classList.add("bad");
+            const fix = e.suggestion && e.eye
+              ? `<button class="fix" onclick='applyFix(${JSON.stringify(e.eye)}, ${JSON.stringify(e.suggestion.field)}, ${JSON.stringify(String(e.suggestion.value))})'>Apply fix: ${esc(e.suggestion.value === "" ? "clear" : e.suggestion.value)}</button><br><small>${esc(e.suggestion.reason)}</small>`
+              : "";
+            return `<li>${esc(e.message)} <code>${esc(e.code)}</code>${fix}</li>`;
+          }).join("");
+          parts.push(`<b>Prescription has ${data.errors.length} problem(s):</b><ul>${items}</ul>`);
+        }
+        if (data.warnings && data.warnings.length) {
+          parts.push(`<div class="panel warn"><h3>Clinical warnings (do not block)</h3><ul>${data.warnings
+            .map((w) => `<li>${esc(w.message)} <code>${esc(w.code)}</code></li>`).join("")}</ul></div>`);
+        }
+        if (data.summary && data.summary.right && data.summary.right.se !== undefined) {
+          const row = (eye) => {
+            const s = data.summary[eye];
+            if (!s || s.se === null) return `<li>${eye}: not available until the eye is valid</li>`;
+            const t = s.transposed;
+            return `<li>${eye === "right" ? "Right" : "Left"}: SE ${s.se}; transposed ${t.sph} / ${t.cyl} x ${t.axis ?? "-"}</li>`;
+          };
+          parts.push(`<div class="panel"><h3>Summary</h3><ul>${row("right")}${row("left")}</ul></div>`);
+        }
+        if (data.plausibility) {
+          const p = data.plausibility;
+          const col = p.band === "typical" ? "#3a9b5c" : p.band === "double_check" ? "#d9a400" : "#d33";
+          parts.push(`<div class="panel"><h3>Rule-based plausibility: ${p.score}/100 (${esc(p.band)})</h3>
+            <div class="bar"><span style="width:${p.score}%;background:${col}"></span></div>
+            ${p.reasons.length ? "<ul>" + p.reasons.map((r) => `<li>${esc(r)}</li>`).join("") + "</ul>" : ""}</div>`);
+        }
+        if (data.anomaly) {
+          const a = data.anomaly;
+          const col = a.band === "typical" ? "#3a9b5c" : a.band === "uncommon" ? "#d9a400" : "#d33";
+          parts.push(`<div class="panel"><h3>ML anomaly model: typicality ${a.typicality}/100 (${esc(a.band)})</h3>
+            <div class="bar"><span style="width:${Math.max(a.typicality, 2)}%;background:${col}"></span></div>
+            ${a.top_factors.length ? "<ul>" + a.top_factors.map((f) => `<li>${esc(f.label)}: ${f.value} (z ${f.z}, ${esc(f.note)})</li>`).join("") + "</ul>" : "<small>No unusual factors.</small>"}
+            <small>Model: ${esc(a.model)}</small></div>`);
+        }
+        show(data.valid ? "ok" : "err", parts.join(""));
+      }
+    </script>
+  </body>
+</html>
