@@ -68,7 +68,7 @@ def _check_power(eye, field, label, raw, lo, hi, required, errors):
     if value is None:
         if required:
             errors.append(_error(eye, field, "REQUIRED",
-                f"{Eye} eye {label} is required, got empty."))
+                f"{Eye} eye {label} is required (must be between {lo:+.2f} and {hi:+.2f}), got empty."))
         return None
     if not (lo <= value <= hi):
         errors.append(_error(eye, field, "OUT_OF_RANGE",
@@ -89,7 +89,8 @@ def _check_axis(eye, raw, cyl, errors):
     if _is_blank(raw):
         if not cyl_is_zero:
             errors.append(_error(eye, "axis", "AXIS_REQUIRED",
-                f"{Eye} eye Axis is required when CYL is {cyl:+.2f}, got empty."))
+                f"{Eye} eye Axis is required (must be a whole number from {AXIS_MIN} to {AXIS_MAX}) "
+                f"when CYL is {cyl:+.2f}, got empty."))
         return None
 
     value, code = parse_power(raw)
@@ -99,7 +100,8 @@ def _check_axis(eye, raw, cyl, errors):
         return None
     if value != int(value):
         errors.append(_error(eye, "axis", "AXIS_NOT_INTEGER",
-            f"{Eye} eye Axis must be a whole number (no decimals), got {_show(raw)}."))
+            f"{Eye} eye Axis must be a whole number from {AXIS_MIN} to {AXIS_MAX} (no decimals), "
+            f"got {_show(raw)}."))
         return None
     axis = int(value)
     if not (AXIS_MIN <= axis <= AXIS_MAX):

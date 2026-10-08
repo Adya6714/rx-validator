@@ -1,8 +1,8 @@
 # Todo checklist
 
 ## Phase status
-- [ ] Phase 0 audit done (docs/audit.md exists)
-- [ ] Phase 1 baseline green + committed
+- [x] Phase 0 audit done (docs/audit.md exists)
+- [x] Phase 1 baseline green + committed
 - [ ] Phase 2 smart validation + committed
 - [ ] Phase 3 interactive UI + committed
 - [ ] Phase 4 hardening + committed
@@ -24,7 +24,7 @@
 - [ ] contract.md updated BEFORE code when response shape changed
 - [ ] validator.py has no FastAPI imports
 - [ ] No magic numbers outside constants at top of validator.py
-- [ ] Error messages include eye, field, range, received value
+- [x] Error messages include eye, field, range, received value
 - [ ] Agent ran tests and curl itself and pasted results, not just claimed success
 
 ## Cross-file requests
