@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lenskart Rx Validator</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        max-width: 640px;
+        margin: 40px auto;
+        padding: 0 16px;
+        color: #222;
+      }
+      h1 {
+        font-size: 22px;
+      }
+      table {
+        border-collapse: collapse;
+        margin: 16px 0;
+      }
+      th,
+      td {
+        padding: 6px 8px;
+        text-align: left;
+      }
+      input {
+        width: 90px;
+        padding: 6px;
+        border: 1px solid #bbb;
+        border-radius: 4px;
+        font-size: 14px;
+      }
+      input.bad {
+        border: 2px solid #d33;
+        background: #fff3f3;
+      }
+      button {
+        padding: 8px 12px;
+        margin-right: 6px;
+        border: 1px solid #888;
+        border-radius: 4px;
+        background: #f5f5f5;
+        cursor: pointer;
+      }
+      button.primary {
+        background: #1a5fd0;
+        color: #fff;
+        border-color: #1a5fd0;
+      }
+      #result {
+        margin-top: 20px;
+        padding: 12px;
+        border-radius: 6px;
+        display: none;
+      }
+      #result.ok {
+        display: block;
+        background: #eaf7ee;
+        border: 1px solid #3a9b5c;
+      }
+      #result.err {
+        display: block;
+        background: #fdeeee;
+        border: 1px solid #d33;
+      }
+      code {
+        font-size: 12px;
+        color: #666;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Lenskart Rx Validator</h1>
+    <p>
+      Enter SPH, CYL and Axis for each eye. CYL and Axis can be blank if there
+      is no astigmatism.
+    </p>
+
+    <table>
+      <tr>
+        <th></th>
+        <th>SPH</th>
+        <th>CYL</th>
+        <th>Axis</th>
+      </tr>
+      <tr>
+        <td><b>Right (OD)</b></td>
+        <td><input type="text" id="right-sph" /></td>
+        <td><input type="text" id="right-cyl" /></td>
+        <td><input type="text" id="right-axis" /></td>
+      </tr>
+      <tr>
+        <td><b>Left (OS)</b></td>
+        <td><input type="text" id="left-sph" /></td>
+        <td><input type="text" id="left-cyl" /></td>
+        <td><input type="text" id="left-axis" /></td>
+      </tr>
+    </table>
+
+    <button class="primary" onclick="validateRx()">Validate</button>
+    <button onclick="fill(VALID)">Fill valid sample</button>
+    <button onclick="fill(BAD)">Fill bad sample</button>
+    <button onclick="fill(EMPTY)">Clear</button>
+
+    <div id="result"></div>
+
+    <script>
+      const EYES = ["right", "left"];
+      const FIELDS = ["sph", "cyl", "axis"];
+      const VALID = {
+        right: ["-1.25", "-0.50", "90"],
+        left: ["plano", "", ""],
+      };
+      const BAD = { right: ["25", "-1.00", ""], left: ["abc", "0", "200"] };
+      const EMPTY = { right: ["", "", ""], left: ["", "", ""] };
+
+      function fill(sample) {
+        EYES.forEach((eye) =>
+          FIELDS.forEach((f, i) => {
+            document.getElementById(eye + "-" + f).value = sample[eye][i];
+          }),
+        );
+        clearMarks();
+        show("", "");
+      }
+
+      function clearMarks() {
+        document
+          .querySelectorAll("input")
+          .forEach((el) => el.classList.remove("bad"));
+      }
+
+      function show(cls, html) {
+        const box = document.getElementById("result");
+        box.className = cls;
+        box.innerHTML = html;
+      }
+
+      function esc(s) {
+        return String(s).replace(
+          /[&<>"]/g,
+          (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c],
+        );
+      }
+
+      async function validateRx() {
+        clearMarks();
+        const payload = {};
+        EYES.forEach((eye) => {
+          payload[eye] = {};
+          FIELDS.forEach(
+            (f) =>
+              (payload[eye][f] = document.getElementById(eye + "-" + f).value),
+          );
+        });
+
+        let data;
+        try {
+          const res = await fetch("/validate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          data = await res.json();
+        } catch (e) {
+          show("err", "Could not reach the server. Is it running?");
+          return;
+        }
+
+        if (data.valid) {
+          const n = data.normalized;
+          const line = (eye) =>
+            `${eye === "right" ? "Right" : "Left"}: SPH ${n[eye].sph}, CYL ${n[eye].cyl}, Axis ${n[eye].axis ?? "-"}`;
+          show(
+            "ok",
+            `<b>Prescription is valid.</b><br>${line("right")}<br>${line("left")}`,
+          );
+          return;
+        }
+
+        const items = (data.errors || [])
+          .map((e) => {
+            const el = e.eye && document.getElementById(e.eye + "-" + e.field);
+            if (el) el.classList.add("bad");
+            return `<li>${esc(e.message)} <code>${esc(e.code)}</code></li>`;
+          })
+          .join("");
+        show(
+          "err",
+          `<b>Prescription has ${data.errors.length} problem(s):</b><ul>${items}</ul>`,
+        );
+      }
+    </script>
+  </body>
+</html>
