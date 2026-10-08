@@ -16,6 +16,10 @@ ANTIMETROPIA_SE = 1.00   (one eye SE <= -1.00 and the other >= +1.00 triggers AN
 SCORE_START = 100
 SCORE_PENALTY = {"HIGH_POWER": 15, "ANISOMETROPIA": 20, "ANTIMETROPIA": 15}
 SCORE_BANDS: >=80 "typical", 50..79 "double_check", <50 "verify"
+MAX_INPUT_LEN = 20   (docs/implementation.md 4.1 — raw string inputs longer than
+                      this on sph/cyl/axis are rejected with TOO_LONG before any
+                      parsing is attempted, so a pathological paste can't reach
+                      float() or the suggestion/summary math at all)
 
 ## Functions (app/validator.py) — v1, unchanged
 parse_power(raw) -> tuple[float | None, str | None]
@@ -159,9 +163,15 @@ Only reachable if validate_prescription raises despite its contract never to do
 so. Documented so it isn't a surprise; not expected to ever fire.
 
 ## Error codes
-REQUIRED, NOT_A_NUMBER, OUT_OF_RANGE, BAD_STEP,
+REQUIRED, NOT_A_NUMBER, OUT_OF_RANGE, BAD_STEP, TOO_LONG,
 AXIS_NOT_INTEGER, AXIS_REQUIRED, AXIS_WITHOUT_CYL, MISSING_EYE,
 BAD_REQUEST (HTTP 400 transport-level only), INTERNAL (HTTP 500, defensive only)
+
+TOO_LONG: raw string value for sph/cyl/axis exceeds MAX_INPUT_LEN (20) characters.
+Checked before parsing, so it takes precedence over NOT_A_NUMBER/OUT_OF_RANGE/etc
+for that field. Never carries a suggestion. Message states the field, the 20-char
+limit, and the received length (not the raw value itself, to avoid echoing a
+20+ character string back into an error message).
 
 ## Warning codes
 HIGH_POWER, ANISOMETROPIA, ANTIMETROPIA, PLUS_CYL

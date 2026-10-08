@@ -23,6 +23,8 @@ SCORE_PENALTY = {"HIGH_POWER": 15, "ANISOMETROPIA": 20, "ANTIMETROPIA": 15}
 BAND_TYPICAL_MIN = 80
 BAND_DOUBLE_CHECK_MIN = 50
 
+MAX_INPUT_LEN = 20  # Phase 4.1: reject pathologically long raw input before parsing it
+
 
 def _is_blank(raw):
     return raw is None or (isinstance(raw, str) and raw.strip() == "")
@@ -85,6 +87,11 @@ def _suggest_out_of_range(field, raw, value, lo, hi, axis_raw):
 def _check_power(eye, field, label, raw, lo, hi, required, errors, axis_raw=None):
     """Validate SPH or CYL. Returns the parsed value (or None)."""
     Eye = eye.capitalize()
+    if isinstance(raw, str) and len(raw) > MAX_INPUT_LEN:
+        errors.append(_error(eye, field, "TOO_LONG",
+            f"{Eye} eye {label} must be at most {MAX_INPUT_LEN} characters, "
+            f"got a {len(raw)}-character value."))
+        return None
     value, code = parse_power(raw)
     if code:
         errors.append(_error(eye, field, code,
@@ -118,6 +125,12 @@ def _check_axis(eye, raw, cyl, errors):
     """Validate Axis using the already-parsed CYL value. Returns int or None."""
     Eye = eye.capitalize()
     cyl_is_zero = cyl is None or cyl == 0
+
+    if isinstance(raw, str) and len(raw) > MAX_INPUT_LEN:
+        errors.append(_error(eye, "axis", "TOO_LONG",
+            f"{Eye} eye Axis must be at most {MAX_INPUT_LEN} characters, "
+            f"got a {len(raw)}-character value."))
+        return None
 
     if _is_blank(raw):
         if not cyl_is_zero:

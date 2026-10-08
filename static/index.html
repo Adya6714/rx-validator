@@ -313,6 +313,7 @@
           input.id = id;
           input.name = id;
           input.autocomplete = "off";
+          input.maxLength = 20; // Phase 4.1: mirrors the backend's TOO_LONG cap
 
           const stepper = document.createElement("div");
           stepper.className = "stepper";

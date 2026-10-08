@@ -112,6 +112,39 @@ def test_sph_error_codes(sph, code):
     assert code in _field_codes(errors, "right", "sph")
 
 
+# --- Phase 4.1: input length cap ----------------------------------------------
+
+def test_too_long_sph_rejected_before_parsing():
+    errors, _ = validate_eye(
+        "right", {"sph": "1" * 21, "cyl": "", "axis": ""}
+    )
+    assert "TOO_LONG" in _field_codes(errors, "right", "sph")
+    assert "NOT_A_NUMBER" not in _field_codes(errors, "right", "sph")
+
+
+def test_too_long_cyl_rejected_before_parsing():
+    errors, _ = validate_eye(
+        "left", {"sph": "-1.00", "cyl": "-" + "0" * 21, "axis": "90"}
+    )
+    assert "TOO_LONG" in _field_codes(errors, "left", "cyl")
+
+
+def test_too_long_axis_rejected_before_parsing():
+    errors, _ = validate_eye(
+        "right", {"sph": "-1.00", "cyl": "-0.50", "axis": "9" * 21}
+    )
+    assert "TOO_LONG" in _field_codes(errors, "right", "axis")
+
+
+def test_input_at_exactly_max_length_is_not_too_long():
+    # pad an otherwise-valid value with trailing zeros to exactly MAX_INPUT_LEN (20)
+    # chars, to prove the boundary is ">20", not ">=20".
+    padded = "-1.25" + "0" * (20 - len("-1.25"))
+    assert len(padded) == 20
+    errors, _ = validate_eye("right", {"sph": padded, "cyl": "", "axis": ""})
+    assert "TOO_LONG" not in _field_codes(errors, "right", "sph")
+
+
 # --- CYL errors --------------------------------------------------------------
 
 @pytest.mark.parametrize(
